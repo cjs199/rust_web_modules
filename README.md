@@ -439,3 +439,30 @@ test_diy_find:[
   ],
   ......
 ```
+
+分页查询
+```
+
+
+    // 分页查询,分页页码从1开始
+    #[pro_anonymous]
+    #[get("/test_direct_find_entities_by_page")]
+    pub async fn test_direct_find_entities_by_page() -> impl IntoResponse {
+        let direct_find_entities_by_page = TestSqlQuery::direct_find_paged_result(Test::default(), 1, 1).await;
+        println!("direct_find_entities_by_page:{:?}" , direct_find_entities_by_page);
+        Json("OK")
+    }
+
+
+```
+
+
+输出结果
+```
+2024-11-04 15:09:58.667 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9738426559168517- summary="SELECT COUNT(*) FROM `test`" db.statement="" rows_affected=0 rows_returned=1 elapsed=21.0005ms elapsed_secs=0.0210005
+2024-11-04 15:09:58.696 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9738426559168517- summary="SELECT `id`,`create_by`,`create_time`,`update_by`,`update_time`,`version`,`str_column`,`f32_column`,`json_column`,`enum_column` FROM `test` …" db.statement="\n\nSELECT\n  `id`,\n  `create_by`,\n  `create_time`,\n  `update_by`,\n  `update_time`,\n  `version`,\n  `str_column`,\n  `f32_column`,\n  `json_column`,\n  `enum_column`\nFROM\n  `test`\nORDER BY\n  `id` Desc\nLIMIT\n  1 OFFSET 0\n" rows_affected=0 rows_returned=1 elapsed=19.2336ms elapsed_secs=0.0192336
+direct_find_entities_by_page:PageResult { content: [Test { id: Some(9733073162797061), create_by: Some(0), create_time: Some(2024-11-03T15:35:31.239965Z), update_by: Some(0), update_time: Some(2024-11-03T15:35:31.240203Z), version: Some(7), str_column: Some("1"), f32_column: Some(11.0), json_column: Some(Json({"k": String("v")})), enum_column: Some(Small) }], totalElements: 64, page: 1 }
+error: process didn't exit successfully: `target\debug\module_test_sys.exe` (exit code: 0xc000013a, STATUS_CONTROL_C_EXIT)
+
+
+```

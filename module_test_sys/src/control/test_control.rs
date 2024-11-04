@@ -102,4 +102,15 @@ impl TestControl {
         }).await;
         Json("OK")
     }
+
+    // 分页查询,分页页码从1开始
+    #[pro_anonymous]
+    #[get("/test_direct_find_entities_by_page")]
+    pub async fn test_direct_find_entities_by_page() -> impl IntoResponse {
+        let direct_find_entities_by_page = TestSqlQuery::direct_find_paged_result(Test::default(), 1, 1).await;
+        println!("direct_find_entities_by_page:{:?}" , direct_find_entities_by_page);
+        Json("OK")
+    }
+
+
 }
