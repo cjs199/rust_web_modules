@@ -1,0 +1,11 @@
+[workspace]
+
+resolver = "2"
+
+members = [ 
+    "framework_base_web", 
+    "framework_utils",  
+    "framework_redis", 
+    "framework_macro", 
+    "module_test_sys", 
+    ]

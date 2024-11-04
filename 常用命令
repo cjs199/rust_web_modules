@@ -1,0 +1,38 @@
+
+多模块教程
+https://blog.csdn.net/weixin_44691608/article/details/122254087
+
+
+cargo new framework-utils --lib 
+
+
+Linux
+
+安装rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+配置环境变量
+vim ~/.bashrc
+打开~/.bashrc文件,在文件末尾添加以下内容：
+export PATH="$HOME/.cargo/bin:$PATH"
+
+
+安装环境
+sudo apt install libudev-dev
+sudo apt install libssl-dev
+
+
+正式打包
+cargo build --release
+
+调试打包
+cargo run --package module_test_sys --bin module_test_sys
+
+
+docker运行测试
+docker pull ubuntu:22.04
+
+拷贝 env 环境文件
+docker run -it --name myubuntu -v /tmp/rust_modules/target/debug:/container/directory ubuntu:22.04 /bin/bash -c "cd /container/directory && ./module_test_sys"
+
+

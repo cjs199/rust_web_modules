@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>API 请求管理器</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <h1>API 请求管理器</h1>
+        <div>
+            <input type="text" id="query-url-input" placeholder="输入查询 API 的 URL" value="http://127.0.0.1:39000/get_api" style="width: 100%;box-sizing: border-box;"><br>
+            <button id="query-api-btn" style="width: 18%;">查询 API</button>
+            <input type="text" id="filter-input" placeholder="输入过滤文本" style="width: 20%;box-sizing: border-box;">
+            <select id="api-select" style="width: 60%;margin-top: 10px;"></select>
+        </div>
+        <form id="request-form">
+            <label for="method">请求方法：</label>
+            <select id="method">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="DELETE">DELETE</option>
+            </select>
+            <label for="url">URL：</label>
+            <input type="text" id="url" placeholder="输入 API 地址">
+            <label for="params">参数（JSON）：</label>
+            <textarea id="params" placeholder="输入请求参数"></textarea>
+            <label for="auth-token">Authorization Token：</label>
+            <input type="text" id="auth-token" placeholder="输入 Authorization Token">
+            <button type="submit">发送请求</button>
+        </form>
+        <div id="result"></div>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>

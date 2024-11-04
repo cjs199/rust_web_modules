@@ -1,0 +1,25 @@
+[package]
+name = "framework_redis"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# 环境变量读取配置
+dotenv = "0.15.0"
+lazy_static="1.4.0"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+framework_utils = { path = "../framework_utils" }
+once_cell = "1.19.0"
+log = "0.4.21"
+
+framework_macro = { path = "../framework_macro" }
+
+idgenerator = "2.0.0"
+tokio = { version = "1.0", features = ["full"] }
+
+r2d2_redis = "0.14.0"

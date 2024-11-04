@@ -1,0 +1,29 @@
+[package]
+name = "framework_utils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.21"
+
+lazy_static="1.4.0"
+
+serde = "1.0"
+serde_json = "1.0"
+
+tokio = { version = "1.40.0", features = ["full"] }
+
+async-std = "1.13" 
+
+reqwest = { version =  "0.12.8", features = ["json"] }
+rusqlite = { version = "0.30.0", features = ["bundled"] }
+
+aes-gcm = "0.10.3"
+hex = "0.4.3"
+base64 = "0.22.1"
+
+bcrypt = "0.15.1"
+
+idgenerator = "2.0.0"
