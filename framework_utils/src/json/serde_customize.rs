@@ -69,11 +69,7 @@ where
     T: Default + Deserialize<'de>,
     D: Deserializer<'de>,
 {
-    let deserialize: Result<T, <D as Deserializer<'_>>::Error> = Deserialize::deserialize(deserializer);
-    match deserialize {
-        Ok(s) => {
-            Ok(Some(s))
-        }
-        Err(_) => Ok(None),
-    }
+    let ret_option = Option::deserialize(deserializer)?;
+    Ok(ret_option)
+
 }
