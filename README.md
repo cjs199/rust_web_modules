@@ -98,7 +98,7 @@ framework_utils 模块是一个 通用工具类模块，为项目提供一系列
 
 先定义一个control, get,post和请求demo1
 
-```
+```rust
 pub struct TestControl {}
 
 #[control]
@@ -123,7 +123,7 @@ impl TestControl {
 ```
 
 在main函数中注册一下control
-```
+```rust
 #[tokio::main]
 async fn main() {
     ...
@@ -177,7 +177,7 @@ post_demo
 interval_job表示在服务器上间隔执行的job , 
 redis_lock_job表示分布式锁下,间隔执行的任务
 
-```
+```rust
 
 // 本地缓存清理定时任务
 pub struct TestJobQue {}
@@ -203,7 +203,7 @@ impl TestJobQue {
 
 redis mq 接收消息
 
-```
+```rust
 
 pub struct TestMqQue {}
 
@@ -235,7 +235,7 @@ impl TestMqQue {
 
 
 在main函数中注册一下job和mq
-```
+```rust
 
 #[tokio::main]
 async fn main() {
@@ -308,7 +308,7 @@ CREATE TABLE `test` (
 create_by,update_by会从pro_base_security_util::get_login_user_id()中读取值维护
 
 
-```
+```rust
 
 // 通过宏为模板生成增删改查的方法
 #[table(test)]
@@ -352,7 +352,7 @@ direct_开头的方法,表示这是一个静态方法,可以直接执行
 
 接口测试
 
-```
+```rust
 
     // 查询一条打印
     #[pro_anonymous]
@@ -394,8 +394,7 @@ test_direct_find_by_id:{
 
 
 个性化查询
-
-```
+```rust
 
     // 个性化查询
     #[pro_anonymous]
@@ -441,7 +440,7 @@ test_diy_find:[
 ```
 
 分页查询
-```
+```rust
 
 
     // 分页查询,分页页码从1开始
@@ -464,5 +463,117 @@ test_diy_find:[
 direct_find_entities_by_page:PageResult { content: [Test { id: Some(9733073162797061), create_by: Some(0), create_time: Some(2024-11-03T15:35:31.239965Z), update_by: Some(0), update_time: Some(2024-11-03T15:35:31.240203Z), version: Some(7), str_column: Some("1"), f32_column: Some(11.0), json_column: Some(Json({"k": String("v")})), enum_column: Some(Small) }], totalElements: 64, page: 1 }
 error: process didn't exit successfully: `target\debug\module_test_sys.exe` (exit code: 0xc000013a, STATUS_CONTROL_C_EXIT)
 
+
+```
+
+事务操作demo
+```rust
+
+    // 事务操作demo
+    #[pro_anonymous]
+    #[get("/test_tx_exec")]
+    pub async fn test_tx_exec() -> impl IntoResponse {
+        {
+            //一个成功的事务成功案例
+            let result =
+                TestSqlQuery::tx_exec(|mut tx: sqlx::Transaction<'_, sqlx::MySql>| async {
+                    // 更新1
+                    {
+                        let id: i64 = 9732864687472645;
+                        let direct_find_by_id =
+                            TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                        let rows_affected =
+                            TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                                .await
+                                .rows_affected();
+                        if rows_affected != 1 {
+                            return (Err(ProException::事务执行异常), tx);
+                        }
+                    }
+
+                    // 更新2
+                    {
+                        let id: i64 = 9732915109888006;
+                        let direct_find_by_id =
+                            TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                        let rows_affected =
+                            TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                                .await
+                                .rows_affected();
+                        if rows_affected != 1 {
+                            return (Err(ProException::事务执行异常), tx);
+                        }
+                    }
+
+                    let ret: Result<&str, ProException> = Ok("OK");
+                    (ret, tx)
+                })
+                .await;
+            match result {
+                Ok(data) => println!("data:{:?}", data),
+                Err(err) => println!("err:{:?}", err),
+            }
+        }
+        {
+            //一个失败的事务案例
+            let result =
+                TestSqlQuery::tx_exec(|mut tx: sqlx::Transaction<'_, sqlx::MySql>| async {
+                    // 成功更新1
+                    {
+                        let id: i64 = 9733066038378502;
+                        let direct_find_by_id =
+                            TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                        let rows_affected =
+                            TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                                .await
+                                .rows_affected();
+                        if rows_affected != 1 {
+                            return (Err(ProException::事务执行异常), tx);
+                        }
+                    }
+
+                    // 失败更新2
+                    {
+                        let id: i64 = 9733066038706181;
+                        let mut direct_find_by_id =
+                            TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+
+                        // 通过修改id,使得update失败
+                        direct_find_by_id.id = Some( pro_snowflake_util::next_id() );
+
+                        let rows_affected =
+                            TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                                .await
+                                .rows_affected();
+                        if rows_affected != 1 {
+                            return (Err(ProException::事务执行异常), tx);
+                        }
+                    }
+
+                    let ret: Result<&str, ProException> = Ok("OK");
+                    (ret, tx)
+                })
+                .await;
+            match result {
+                Ok(data) => println!("data:{:?}", data),
+                Err(err) => println!("err:{:?}", err),
+            }
+        }
+
+        Json("OK")
+    }
+
+```
+
+
+输出结果
+```
+......
+2024-11-06 05:33:54.169 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="SELECT `id`,`create_by`,`create_time`,`update_by`,`update_time`,`version`,`str_column`,`f32_column`,`json_column`,`enum_column` FROM `test` …" db.statement="\n\nSELECT\n  `id`,\n  `create_by`,\n  `create_time`,\n  `update_by`,\n  `update_time`,\n  `version`,\n  `str_column`,\n  `f32_column`,\n  `json_column`,\n  `enum_column`\nFROM\n  `test`\nWHERE\n  `id` = ?\n" rows_affected=0 rows_returned=1 elapsed=23.4512ms elapsed_secs=0.0234512
+2024-11-06 05:33:54.170 INFO framework_base_web\src\utils\pro_base_security_util.rs:57 -9747485946544133- 没有从线程局部存储中获取到用户信息
+2024-11-06 05:33:54.181 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="UPDATE `test` SET `id`=?,`create_by`=?,`create_time`=?,`update_by`=?,`update_time`=?,`version`=?,`str_column`=?,`f32_column`=?,`json_column`=?,`enum_column`=? …" db.statement="\n\nUPDATE\n  `test`\nSET\n  `id` = ?,\n  `create_by` = ?,\n  `create_time` = ?,\n  `update_by` = ?,\n  `update_time` = ?,\n  `version` = ?,\n  `str_column` = ?,\n  `f32_column` = ?,\n  `json_column` = ?,\n  `enum_column` = ?\nWHERE\n  `id` = ?\n  AND version = ?\n" rows_affected=0 rows_returned=0 elapsed=7.687ms elapsed_secs=0.007687
+2024-11-06 05:33:54.181 ERROR module_test_sys\src\entities\test.rs:35 -9747485946544133- 事务执行异常:ProException { code: 116, message: "事务执行异常" }    
+2024-11-06 05:33:54.198 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="ROLLBACK" db.statement="" rows_affected=0 rows_returned=0 elapsed=16.2574ms elapsed_secs=0.0162574
+err:ProException { code: 116, message: "事务执行异常" }
 
 ```

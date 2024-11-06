@@ -404,3 +404,100 @@ error: process didn't exit successfully: `target\debug\module_test_sys.exe` (exi
 
 
 ```
+
+```rust
+// Transaction Operation Demo
+#[pro_anonymous]
+#[get("/test_tx_exec")]
+pub async fn test_tx_exec() -> impl IntoResponse {
+    {
+        // A successful transaction case
+        let result = TestSqlQuery::tx_exec(|mut tx: sqlx::Transaction<'_, sqlx::MySql>| async {
+            // Update 1
+            {
+                let id: i64 = 9732864687472645;
+                let direct_find_by_id = TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                let rows_affected = TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                  .await
+                  .rows_affected();
+                if rows_affected!= 1 {
+                    return (Err(ProException::TransactionExecutionException), tx);
+                }
+            }
+
+            // Update 2
+            {
+                let id: i64 = 9732915109888006;
+                let direct_find_by_id = TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                let rows_affected = TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                  .await
+                  .rows_affected();
+                if rows_affected!= 1 {
+                    return (Err(ProException::TransactionExecutionException), tx);
+                }
+            }
+
+            let ret: Result<&str, ProException> = Ok("OK");
+            (ret, tx)
+        })
+      .await;
+        match result {
+            Ok(data) => println!("data:{:?}", data),
+            Err(err) => println!("err:{:?}", err),
+        }
+    }
+    {
+        // A failed transaction case
+        let result = TestSqlQuery::tx_exec(|mut tx: sqlx::Transaction<'_, sqlx::MySql>| async {
+            // Successful Update 1
+            {
+                let id: i64 = 9733066038378502;
+                let direct_find_by_id = TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+                let rows_affected = TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                  .await
+                  .rows_affected();
+                if rows_affected!= 1 {
+                    return (Err(ProException::TransactionExecutionException), tx);
+                }
+            }
+
+            // Failed Update 2
+            {
+                let id: i64 = 9733066038706181;
+                let mut direct_find_by_id = TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
+
+                // By modifying the id to make the update fail
+                direct_find_by_id.id = Some(pro_snowflake_util::next_id());
+
+                let rows_affected = TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)
+                  .await
+                  .rows_affected();
+                if rows_affected!= 1 {
+                    return (Err(ProException::TransactionExecutionException), tx);
+                }
+            }
+
+            let ret: Result<&str, ProException> = Ok("OK");
+            (ret, tx)
+        })
+      .await;
+        match result {
+            Ok(data) => println!("data:{:?}", data),
+            Err(err) => println!("err:{:?}", err),
+        }
+    }
+
+    Json("OK")
+}
+```
+
+Output Results
+```
+......
+2024-11-06 05:33:54.169 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="SELECT `id`,`create_by`,`create_time`,`update_by`,`update_time`,`version`,`str_column`,`f32_column`,`json_column`,`enum_column` FROM `test` …" db.statement="\n\nSELECT\n  `id`,\n  `create_by`,\n  `create_time`,\n  `update_by`,\n  `update_time`,\n  `version`,\n  `str_column`,\n  `f32_column`,\n  `json_column`,\n  `enum_column`\nFROM\n  `test`\nWHERE\n  `id` =?\n" rows_affected=0 rows_returned=1 elapsed=23.4512ms elapsed_secs=0.0234512
+2024-11-06 05:33:54.170 INFO framework_base_web\src\utils\pro_base_security_util.rs:57 -9747485946544133- No user information retrieved from thread-local storage.
+2024-11-06 05:33:54.181 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="UPDATE `test` SET `id`=?,`create_by`=?,`create_time`=?,`update_by`=?,`update_time`=?,`version`=?,`str_column`=?,`f32_column`=?,`json_column`=?,`enum_column`=? …" db.statement="\n\nUPDATE\n  `test`\nSET\n  `id` =?,\n  `create_by` =?,\n  `create_time` =?,\n  `update_by` =?,\n  `update_time` =?,\n  `version` =?,\n  `str_column` =?,\n  `f32_column` =?,\n  `json_column` =?,\n  `enum_column` =?\nWHERE\n  `id` =?\n  AND version =?\n" rows_affected=0 rows_returned=0 elapsed=7.687ms elapsed_secs=0.007687
+2024-11-06 05:33:54.181 ERROR module_test_sys\src\entities\test.rs:35 -9747485946544133- Transaction execution exception: ProException { code: 116, message: "Transaction execution exception" }    
+2024-11-06 05:33:54.198 DEBUG C:\Users\PC\.cargo\registry\src\index.crates.io-6f17d22bba15001f\sqlx-core-0.7.4\src\logger.rs:138 -9747485946544133- summary="ROLLBACK" db.statement="" rows_affected=0 rows_returned=0 elapsed=16.2574ms elapsed_secs=0.0162574
+err:ProException { code: 116, message: "Transaction execution exception" }
+```
