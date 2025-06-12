@@ -1,13 +1,13 @@
 use framework_base_web::base_service::DB_ONCE_LOCK;
 use framework_base_web::dto::paged_result::PageResult;
 use framework_base_web::utils::pro_base_security_util;
-use framework_base_web::utils::pro_snowflake_util;
 use framework_base_web::utils::pro_sql_query_util;
 use framework_base_web::utils::pro_sql_query_util::Condition;
 use framework_base_web::utils::pro_sql_query_util::Sort;
 use framework_macro::pro_json_ser_der;
 use framework_macro::table;
 use framework_macro::SqlEnum;
+use framework_utils::pro_snowflake_util;
 use framework_utils::exception_enum::ProException;
 use framework_utils::json::serde_customize::option_empty_ignore_deser;
 use framework_utils::json::serde_customize::{

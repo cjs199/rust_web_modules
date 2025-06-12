@@ -44,12 +44,7 @@ pub fn vec_to_object<T: for<'a> Deserialize<'a>>(json: Vec<u8>) -> Result<T, Err
 }
 
 // 深拷贝
-pub fn clone<
-    T: Serialize + for<'de> Deserialize<'de>,
-    R: Serialize + for<'de> Deserialize<'de>,
->(
-    original: &T,
-) -> R {
+pub fn clone<T: Serialize, R: for<'de> Deserialize<'de>>(original: &T) -> R {
     // 将传入的对象 original 序列化为 JSON 字符串。
     // 如果序列化过程中出现错误，会导致程序 panic，实际应用中应进行错误处理。
     let json = serde_json::to_string(original).unwrap();

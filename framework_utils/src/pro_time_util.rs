@@ -5,7 +5,6 @@ pub const PATTERN_T_UTC: &str = "%Y-%m-%dT%H:%M:%SZ";
 pub struct Second {}
 
 impl Second {
-
     // 1秒
     pub const _1_SECOND: i64 = 1;
 
@@ -26,7 +25,6 @@ impl Second {
 
     // 3天
     pub const _3_DAY: i64 = Millisecond::_1_DAY * 3;
-
 }
 
 pub struct Millisecond {}
@@ -37,8 +35,13 @@ impl Millisecond {
     // 1毫秒
     pub const _200: i64 = 200;
 
+    pub const _500: i64 = 500;
+
     // 1秒
     pub const _1_SECOND: i64 = 1000;
+
+    // 3秒
+    pub const _3_SECOND: i64 = 3000;
 
     // 1分钟
     pub const _1_MINUTE: i64 = Millisecond::_1_SECOND * 60;
@@ -62,15 +65,24 @@ impl Millisecond {
     pub const _3_DAY: i64 = Millisecond::_1_DAY * 3;
 }
 
-/// 让当前线程睡眠指定的毫秒数。
-pub fn sleep(millis: u64) {
+// 让当前线程睡眠指定的毫秒数。
+// 警告,线程睡眠会导致线程内的所有协程全都睡眠堵塞
+pub fn thread_sleep(millis: u64) {
     // 将传入的毫秒数转换为 Duration 类型，表示一段时间间隔。
-    let ten_millis = time::Duration::from_millis(millis);
+    let from_millis = time::Duration::from_millis(millis);
     // 使当前线程睡眠指定的时间间隔。
-    thread::sleep(ten_millis);
+    thread::sleep(from_millis);
 }
 
-/// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的纳秒数。
+// 让当前协程睡眠指定的毫秒数。
+pub async fn fiber_sleep(millis: u64) {
+    // 将传入的毫秒数转换为 Duration 类型，表示一段时间间隔。
+    let from_millis = time::Duration::from_millis(millis);
+    // 使当前协程睡眠指定的时间间隔。
+    tokio::time::sleep(from_millis).await;
+}
+
+// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的纳秒数。
 pub fn get_current_nanos() -> u128 {
     // 获取当前系统时间。
     SystemTime::now()
@@ -82,7 +94,7 @@ pub fn get_current_nanos() -> u128 {
         .as_nanos() as u128
 }
 
-/// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的毫秒数。
+// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的毫秒数。
 pub fn get_current_milliseconds() -> i64 {
     // 获取当前系统时间。
     SystemTime::now()
@@ -94,7 +106,7 @@ pub fn get_current_milliseconds() -> i64 {
         .as_millis() as i64
 }
 
-/// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的秒数。
+// 获取当前时间自 Unix 纪元（1970 年 1 月 1 日 00:00:00 UTC）以来的秒数。
 pub fn get_current_seconds() -> i64 {
     // 获取当前系统时间。
     SystemTime::now()

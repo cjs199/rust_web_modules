@@ -1,17 +1,23 @@
+use axum::middleware;
 use axum::{http::Method, routing::get, Json, Router};
 use dotenv::dotenv;
 use framework_utils::{pro_constant_pool_util, pro_str_util};
 use log::info;
 use std::{collections::HashMap, env};
 use tower_http::cors::{Any, CorsLayer};
+
+use crate::config::idempotent_interceptor::{self};
+use crate::config::req_record_util;
 use crate::dto::log_dto::LogDto;
 use crate::job::log_job::LogJob;
 use crate::job::snowflake_job::SnowflakeJob;
-use crate::utils::pro_snowflake_util;
+use framework_utils::pro_snowflake_util;
+
 use chrono::Utc;
 use env_logger::{Builder, Env};
 use std::fs::File;
 use std::vec::Vec;
+
 use std::io::{prelude::*, BufWriter};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -19,12 +25,8 @@ thread_local!(pub static TRACE_ID_THREAD_LOCAL: Mutex<Option<i64>> = Mutex::new(
 pub static LOG_CACHE: Mutex<Vec<LogDto>> = Mutex::new(Vec::new());
 
 pub static LOG_FILE_WRITER: LazyLock<Arc<Mutex<BufWriter<File>>>> = LazyLock::new(|| {
-    let logging_app_file = env::var("logging_app_file").unwrap_or("app.log".to_string());
-    let file = match File::options()
-        .append(true)
-        .create(true)
-        .open(logging_app_file)
-    {
+    let log_app_file = env::var("log_app_file").unwrap();
+    let file = match File::options().append(true).create(true).open(log_app_file) {
         Ok(file) => file,
         Err(error) => {
             eprintln!("创建日志文件失败: {}", error);
@@ -41,14 +43,12 @@ pub fn init_env() {
 
     // 定义服务器名称
     let app_name = env::var("application_name").unwrap_or("".to_string());
-    unsafe { pro_constant_pool_util::APP_NAME = Some(app_name.clone()) };
-
-    let logging_pattern = env::var("logging_pattern")
-        .unwrap_or("{time} {level}\t {logger} -{trace_id}- {msg}".to_string());
+    *pro_constant_pool_util::APP_NAME.try_write().unwrap() = app_name.clone();
+    let log_pattern = env::var("log_pattern").unwrap();
+    let log_level = env::var("log_level").unwrap();
 
     // 初始化日志配置
-    
-    Builder::from_env(Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"))
+    Builder::from_env(Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, log_level))
         .format(move |buf, record| {
             let trace_id = TRACE_ID_THREAD_LOCAL.with(|local| {
                 let mut local_data = local.lock().unwrap();
@@ -57,9 +57,7 @@ pub fn init_env() {
                 }
                 local_data.unwrap()
             });
-
             let now = Utc::now();
-
             let time = now.format("%Y-%m-%d %H:%M:%S.%3f").to_string();
             let logger = format!("{}:{}", record.file().unwrap(), record.line().unwrap());
             let level = record.level();
@@ -72,7 +70,11 @@ pub fn init_env() {
             map.insert("logger".to_string(), logger);
             map.insert("trace_id".to_string(), trace_id.clone());
             map.insert("msg".to_string(), msg.to_string());
-            let message = pro_str_util::format(logging_pattern.clone(), &map);
+            let message = pro_str_util::format(log_pattern.clone(), &map);
+            // 忽略redis断连时的提示
+            if message.contains("broken pipe") {
+                return Ok(());
+            }
             LOG_CACHE.lock().unwrap().push(LogDto {
                 service_name: app_name.clone(),
                 log_msg: message.clone(),
@@ -97,12 +99,20 @@ pub async fn init_server(app: Router, route_map: Vec<HashMap<String, String>>) {
     // 增加一个接口,返回路由信息,包含是get还是post方法,请求地址等等
     let app = app.merge(Router::new().route("/get_api", get(|| async { Json(route_map) })));
     let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         // 允许一切来源
         .allow_origin(Any)
         .allow_headers(Any);
 
-    let app = app.layer(cors); 
+    let app = app.layer(cors);
+    let app = app.layer(middleware::from_fn(idempotent_interceptor::middleware));
+    let app = app.layer(middleware::from_fn(req_record_util::middleware));
 
     // 服务器启动
     let server_url = env::var("server_address").expect("db url,初始化db失败");

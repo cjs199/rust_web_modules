@@ -1,15 +1,16 @@
 use std::{any::Any, collections::HashSet};
 
+use crossbeam::queue::SegQueue;
 use serde::{Deserialize, Serialize};
 
-/// 收集指定结构体切片中指定字段的值放入一个 `Vec` 返回，不去重。
-///
-/// # 参数
-/// - `vec`：一个切片的引用，包含要进行收集的结构体。
-/// - `field_fn`：一个函数闭包，接受结构体的引用并返回要收集的字段的值。
-///
-/// # 返回值
-/// 返回一个包含收集后的指定字段值的 `Vec`。
+// 收集指定结构体切片中指定字段的值放入一个 `Vec` 返回，不去重。
+//
+// # 参数
+// - `vec`：一个切片的引用，包含要进行收集的结构体。
+// - `field_fn`：一个函数闭包，接受结构体的引用并返回要收集的字段的值。
+//
+// # 返回值
+// 返回一个包含收集后的指定字段值的 `Vec`。
 pub fn collect_field_values<T, F, V>(vec: &[T], field_fn: F) -> Vec<V>
 where
     F: Fn(&T) -> V,
@@ -22,14 +23,14 @@ where
     result
 }
 
-/// 收集指定结构体切片中指定字段的值放入一个 `HashSet` 并返回，实现去重。
-///
-/// # 参数
-/// - `vec`：一个切片的引用，包含要进行收集的结构体。
-/// - `field_fn`：一个函数闭包，接受结构体的引用并返回要收集的字段的值。
-///
-/// # 返回值
-/// 返回一个包含收集后的去重后的指定字段值的 `HashSet`。
+// 收集指定结构体切片中指定字段的值放入一个 `HashSet` 并返回，实现去重。
+//
+// # 参数
+// - `vec`：一个切片的引用，包含要进行收集的结构体。
+// - `field_fn`：一个函数闭包，接受结构体的引用并返回要收集的字段的值。
+//
+// # 返回值
+// 返回一个包含收集后的去重后的指定字段值的 `HashSet`。
 pub fn collect_unique_field_values<T, F, V>(vec: &[T], field_fn: F) -> HashSet<V>
 where
     T: Clone,
@@ -119,10 +120,10 @@ pub fn box_to_string(boxed: Box<dyn Any>) -> String {
     }
 }
 
-pub fn filter_data_by_function<T: Serialize + for<'de> Deserialize<'de>>(data: &Vec<T>, f: impl Fn(&T) -> bool) -> Vec<&T> {
+pub fn filter_data_by_function<T: Serialize + for<'de> Deserialize<'de>>(data: &Vec<T>, func: impl Fn(&T) -> bool) -> Vec<&T> {
     let mut result = Vec::new();
     for item in data {
-        if f(item) {
+        if func(item) {
             result.push(item);
         }
     }
@@ -135,8 +136,8 @@ pub fn vec_to_set<T: std::hash::Hash + Eq>(vec: Vec<T>) -> HashSet<T> {
 }
 
 
-/// 将一个引用的向量按照指定大小进行分组，并返回包含对原始向量元素引用的向量的向量。
-pub fn group_vec_by_size<T>(vec: &Vec<T>, group_size: usize) -> Vec<Vec<&T>> {
+// 将一个引用的向量按照指定大小进行分组，并返回包含对原始向量元素引用的向量的向量。
+pub fn group_by_vec_size<T>(vec: &Vec<T>, group_size: usize) -> Vec<Vec<&T>> {
     // 用于存储分组结果的向量
     let mut groups: Vec<Vec<&T>> = Vec::new();
     // 如果传入的向量为空，则直接返回空的结果向量
@@ -150,4 +151,21 @@ pub fn group_vec_by_size<T>(vec: &Vec<T>, group_size: usize) -> Vec<Vec<&T>> {
     }
     // 返回分组结果
     groups
+}
+
+/**
+ * 线程安全的队列
+ */
+pub fn remove_all_from_seg_queue <T>(sq: &SegQueue<T>) -> Vec<T> {
+    let mut data = Vec::new();
+    loop {
+        let pop = sq.pop();
+        if pop.is_none() {
+            break;
+        } else {
+            let val = pop.unwrap();
+            data.push(val);
+        }
+    }
+    data
 }

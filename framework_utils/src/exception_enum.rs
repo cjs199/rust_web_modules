@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// 登录信息数据传输对象结构体
+// 登录信息数据传输对象结构体
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProException {
     pub code: i32,
@@ -26,6 +26,11 @@ impl ProException {
     pub const 无权操作: ProException = ProException {
         code: 15,
         message: "无权操作!",
+    };
+
+    pub const 幂等重复: ProException = ProException {
+        code: 73,
+        message: "请勿频繁请求",
     };
 
     pub const 解密失败: ProException = ProException {

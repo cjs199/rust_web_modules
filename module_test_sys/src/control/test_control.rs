@@ -2,9 +2,10 @@ use std::{collections::HashMap, result};
 
 use crate::entities::test::{Test, TestSqlQuery};
 use axum::{response::IntoResponse, Json};
-use framework_base_web::utils::{pro_snowflake_util, pro_sql_query_util::Condition};
+use framework_base_web::utils::pro_sql_query_util::Condition;
 use framework_macro::{control, get, pro_anonymous};
-use framework_redis::utils::pro_redis_util;
+use framework_redis::utils::{pro_redis_lock_util, pro_redis_util};
+use framework_utils::pro_snowflake_util;
 use framework_utils::{exception_enum::ProException, pro_json_util, pro_time_util};
 use serde_json::Value;
 use sqlx::Row;
@@ -15,7 +16,7 @@ pub struct TestControl {}
 impl TestControl {
     // pro_anonymous 匿名访问注解
     #[pro_anonymous]
-    #[get("/get_demo")]
+    #[get(url = "/get_demo")]
     pub async fn get_demo() -> impl IntoResponse {
         println!("get_demo");
         Json("OK")
@@ -23,7 +24,7 @@ impl TestControl {
 
     // pro_anonymous 匿名访问注解
     #[pro_anonymous]
-    #[get("/post_demo")]
+    #[get(url = "/post_demo")]
     pub async fn post_demo() -> impl IntoResponse {
         println!("post_demo");
         Json("OK")
@@ -31,7 +32,7 @@ impl TestControl {
 
     // 通过id查询
     #[pro_anonymous]
-    #[get("/test_direct_insert")]
+    #[get(url = "/test_direct_insert")]
     pub async fn test_direct_insert() -> impl IntoResponse {
         let direct_find_all = TestSqlQuery::direct_find_all().await.unwrap();
         for mut item in direct_find_all {
@@ -47,7 +48,7 @@ impl TestControl {
 
     // 查询一条打印
     #[pro_anonymous]
-    #[get("/test_direct_find_by_id")]
+    #[get(url = "/test_direct_find_by_id")]
     pub async fn test_direct_find_by_id() -> impl IntoResponse {
         let id: i64 = 9732915109888006;
         let direct_find_by_id = TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
@@ -60,7 +61,7 @@ impl TestControl {
 
     // 个性化查询
     #[pro_anonymous]
-    #[get("/test_diy_find")]
+    #[get(url = "/test_diy_find")]
     pub async fn test_diy_find() -> impl IntoResponse {
         let find_all = TestSqlQuery::new()
             .select((&[Test::FIELD_ID, Test::FIELD_VERSION]).to_vec())
@@ -82,7 +83,7 @@ impl TestControl {
 
     // 查询所有打印
     #[pro_anonymous]
-    #[get("/test_direct_find_all")]
+    #[get(url = "/test_direct_find_all")]
     pub async fn test_direct_find_all() -> impl IntoResponse {
         let direct_find_all = TestSqlQuery::direct_find_all().await.unwrap();
         println!(
@@ -94,14 +95,14 @@ impl TestControl {
 
     // 查询所有打印
     #[pro_anonymous]
-    #[get("/test_lock_wraper")]
+    #[get(url = "/test_lock_wraper")]
     pub async fn test_lock_wraper() -> impl IntoResponse {
-        pro_redis_util::lock_wraper(
+        pro_redis_lock_util::lock_wraper_set_val(
             "test_lock_wraper",
             pro_snowflake_util::next_id_str(),
             async {
                 println!("加锁");
-                pro_time_util::sleep(10000);
+                pro_time_util::fiber_sleep(10000);
                 println!("解锁");
             },
         )
@@ -111,7 +112,7 @@ impl TestControl {
 
     // 分页查询,分页页码从1开始
     #[pro_anonymous]
-    #[get("/test_direct_find_entities_by_page")]
+    #[get(url = "/test_direct_find_entities_by_page")]
     pub async fn test_direct_find_entities_by_page() -> impl IntoResponse {
         let direct_find_entities_by_page =
             TestSqlQuery::direct_find_paged_result(Test::default(), 1, 1).await;
@@ -124,7 +125,7 @@ impl TestControl {
 
     // 事务操作demo
     #[pro_anonymous]
-    #[get("/test_tx_exec")]
+    #[get(url = "/test_tx_exec")]
     pub async fn test_tx_exec() -> impl IntoResponse {
         {
             //一个成功的事务成功案例
@@ -192,7 +193,7 @@ impl TestControl {
                             TestSqlQuery::direct_find_by_id(Box::new(id)).await.unwrap();
 
                         // 通过修改id,使得update失败
-                        direct_find_by_id.id = Some( pro_snowflake_util::next_id() );
+                        direct_find_by_id.id = Some(pro_snowflake_util::next_id());
 
                         let rows_affected =
                             TestSqlQuery::direct_update_by_exec(direct_find_by_id, &mut *tx)

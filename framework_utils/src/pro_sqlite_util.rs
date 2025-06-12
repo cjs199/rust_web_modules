@@ -17,6 +17,9 @@ pub fn init() -> Connection {
     info!("初始化本地数据库连接成功");
 
     {
+
+        let _ = conn.execute("PRAGMA synchronous = OFF",(),);
+
         // 初始化数据，在一个代码块中执行一系列 SQL 语句创建表和索引
         let _ = conn.execute(
             "
@@ -43,11 +46,12 @@ pub fn init() -> Connection {
     {
         // 初始化数据，在另一个代码块中执行 SQL 语句创建另一个表和索引
         let _ = conn.execute(
-            "
+            r#"
                             CREATE TABLE DISK_CACHE (
                             KEY VARCHAR(1000) NOT NULL,
-                            DATA TEXT
-                            );",
+                            DATA TEXT,
+                            PRIMARY KEY ("KEY")
+                            );"#,
             (),
         );
         let _ = conn.execute("CREATE INDEX DISK_CACHE_KEY ON DISK_CACHE (KEY)", ());

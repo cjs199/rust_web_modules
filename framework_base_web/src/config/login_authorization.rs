@@ -35,7 +35,7 @@ thread_local!(pub static LOGIN_INFO_THREAD_LOCAL: Mutex<Option<String>> = Mutex:
 // });
 
 // 登录授权中间件函数，用于验证请求中的 Authorization 头部信息
-pub async fn login_authorization(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+pub async fn middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
     // 获取请求中的 Authorization 头部信息
     let auth_header = req.headers().get(pro_constant_pool_util::AUTHORIZATION);
     if let Some(header_value) = auth_header {
@@ -44,7 +44,7 @@ pub async fn login_authorization(req: Request<Body>, next: Next) -> Result<Respo
         match authorization_result {
             // 如果转换成功
             Ok(authorization) => {
-                let authorization_key = format!("login_authorization:{}", authorization);
+                let authorization_key = format!("middleware:{}", authorization);
                 let cache_authorization_key: Option<String> = pro_local_cache_util::cache_read(&authorization_key);
                 match cache_authorization_key {
                     Some(_) => {
@@ -74,7 +74,7 @@ pub async fn login_authorization(req: Request<Body>, next: Next) -> Result<Respo
                                                 pro_redis_util::map_get(
                                                     pro_constant_pool_util::ONLINE_USERS,
                                                     uid,
-                                                ).await;
+                                                );
                                             return return_redis_aid_option;
                                         },
                                         pro_time_util::Millisecond::_1_MINUTE,

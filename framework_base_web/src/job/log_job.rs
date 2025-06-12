@@ -1,11 +1,14 @@
 use crate::config::init_config::{LOG_CACHE, LOG_FILE_WRITER};
 use framework_macro::{interval_job, job};
+use framework_redis::utils::pro_redis_mq_msg_util;
 use framework_redis::utils::pro_redis_util;
-use framework_utils::pro_job_util::TimerTask;
 use framework_utils::pro_time_util;
-use idgenerator::*;
+use framework_utils::pro_snowflake_util;
 use log::info;
 use std::io::prelude::*;
+use tokio::time::{interval_at, Duration, Instant};
+use framework_utils::pro_thread_util;
+use framework_redis::utils::pro_redis_lock_util;
 
 pub struct LogJob {}
 
@@ -21,6 +24,11 @@ impl LogJob {
             let mut writer = LOG_FILE_WRITER.lock().unwrap();
             for log_dto in &new_log_cache {
                 writeln!(writer, "{}", log_dto.log_msg).unwrap();
+                let log_msg = log_dto.log_msg.clone();
+                if !log_msg.contains("sqlx-core") {
+                    //推送到redis,缓存入库
+                    pro_redis_mq_msg_util::put_msg_que("log_file", log_dto);
+                }
             }
             writer.flush().unwrap();
         }

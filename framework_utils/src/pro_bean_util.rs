@@ -6,21 +6,11 @@ use serde_json;
 use crate::pro_json_util;
 
 // 深拷贝
-pub fn clone<
-    T: Serialize + for<'de> Deserialize<'de>,
-    R: Serialize + for<'de> Deserialize<'de>,
->(
-    original: &T,
-) -> R {
+pub fn clone<T: Serialize, R: for<'de> Deserialize<'de>>(original: &T) -> R {
     pro_json_util::clone(original)
 }
 
-pub fn clone_vec_object<
-    T: Serialize + for<'de> Deserialize<'de>,
-    R: Serialize + for<'de> Deserialize<'de>,
->(
-    original: Vec<&T>,
-) -> Vec<R> {
+pub fn clone_vec_object<T: Serialize, R: for<'de> Deserialize<'de>>(original: Vec<&T>) -> Vec<R> {
     let mut vec = Vec::new();
     for item in original {
         let r: R = clone(item);
@@ -29,10 +19,7 @@ pub fn clone_vec_object<
     vec
 }
 
-pub fn clone_ref_vec_object<
-    T: Serialize + for<'de> Deserialize<'de>,
-    R: Serialize + for<'de> Deserialize<'de>,
->(
+pub fn clone_ref_vec_object<T: Serialize, R: for<'de> Deserialize<'de>>(
     original: &Vec<T>,
 ) -> Vec<R> {
     let mut vec = Vec::new();
@@ -44,7 +31,7 @@ pub fn clone_ref_vec_object<
 }
 
 // 将map对象转换为指定对象
-pub fn map_to_object<K: Serialize, V: Serialize, R: Serialize + for<'de> Deserialize<'de>>(
+pub fn map_to_object<K: Serialize, V: Serialize, R: for<'de> Deserialize<'de>>(
     map: &HashMap<K, V>,
 ) -> R {
     // 将传入的对象 original 序列化为 JSON 字符串。

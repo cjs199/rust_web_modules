@@ -1,23 +1,22 @@
 use lazy_static::lazy_static;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::sync::Mutex;
-use syn::{parse_macro_input, ImplItem, ItemImpl, LitStr, PathSegment, Type};
+use syn::{parse_macro_input, ImplItem, ItemImpl, PathSegment, Type};
 
+use crate::attr_util;
 
 lazy_static! {
-    static ref GET_ROUTE_MAP: Mutex<HashMap<String, (String, String)>> = Mutex::new(HashMap::new());
-    static ref POST_ROUTE_MAP: Mutex<HashMap<String, (String, String)>> =
+    static ref GET_ROUTE_MAP: Mutex<HashMap<String, (String, String, String)>> =
         Mutex::new(HashMap::new());
-    static ref DELETE_ROUTE_MAP: Mutex<HashMap<String, (String, String)>> =
+    static ref POST_ROUTE_MAP: Mutex<HashMap<String, (String, String, String)>> =
+        Mutex::new(HashMap::new());
+    static ref DELETE_ROUTE_MAP: Mutex<HashMap<String, (String, String, String)>> =
         Mutex::new(HashMap::new());
     static ref ANONYMOUS_FN: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-    pub static ref ROUTE_MAP: Mutex<Vec<HashMap<String, String>>> =
-        Mutex::new(Vec::new());
-
+    pub static ref ROUTE_MAP: Mutex<Vec<HashMap<String, String>>> = Mutex::new(Vec::new());
 }
 
 // 使用路由启动
@@ -25,7 +24,13 @@ pub fn add_route_handle() -> TokenStream {
     let anonymous_fn = ANONYMOUS_FN.lock().unwrap();
     let mut route = Vec::new();
     let mut anonymous_route = Vec::new();
-    for (k, (clazz, method_name)) in GET_ROUTE_MAP.lock().unwrap().iter() {
+
+    // 提取请求信息返回
+    let mut route_map: std::sync::MutexGuard<'_, Vec<HashMap<String, String>>> =
+        ROUTE_MAP.lock().unwrap();
+
+    // 遍历get请求组装
+    for (k, (clazz, method_name, desc)) in GET_ROUTE_MAP.lock().unwrap().iter() {
         let clazz = format_ident!("{}", clazz);
         let method_name = format_ident!("{}", method_name);
         if anonymous_fn.contains(&format!("{}{}{}", clazz.clone(), "::", method_name.clone())) {
@@ -38,8 +43,16 @@ pub fn add_route_handle() -> TokenStream {
                     let app = app.route(#k, get(#clazz::#method_name));
             });
         }
+        // 组装请求的介绍
+        let mut get = HashMap::new();
+        get.insert("method".to_string(), "GET".to_string());
+        get.insert("url".to_string(), k.to_string());
+        get.insert("desc".to_string(), desc.to_string());
+        route_map.push(get);
     }
-    for (k, (clazz, method_name)) in POST_ROUTE_MAP.lock().unwrap().iter() {
+    
+    // 遍历post请求组装
+    for (k, (clazz, method_name, desc)) in POST_ROUTE_MAP.lock().unwrap().iter() {
         let clazz = format_ident!("{}", clazz);
         let method_name = format_ident!("{}", method_name);
         if anonymous_fn.contains(&format!("{}{}{}", clazz.clone(), "::", method_name.clone())) {
@@ -52,8 +65,16 @@ pub fn add_route_handle() -> TokenStream {
                     let app = app.route(#k, post(#clazz::#method_name));
             });
         }
+        // 组装请求的介绍
+        let mut post = HashMap::new();
+        post.insert("method".to_string(), "POST".to_string());
+        post.insert("url".to_string(), k.to_string());
+        post.insert("desc".to_string(), desc.to_string());
+        route_map.push(post);
     }
-    for (k, (clazz, method_name)) in DELETE_ROUTE_MAP.lock().unwrap().iter() {
+    
+    // 遍历delete请求组装
+    for (k, (clazz, method_name, desc)) in DELETE_ROUTE_MAP.lock().unwrap().iter() {
         let clazz = format_ident!("{}", clazz);
         let method_name = format_ident!("{}", method_name);
         if anonymous_fn.contains(&format!("{}{}{}", clazz.clone(), "::", method_name.clone())) {
@@ -66,37 +87,13 @@ pub fn add_route_handle() -> TokenStream {
                     let app = app.route(#k, delete(#clazz::#method_name));
             });
         }
-    }
-
-    let get_mutex = GET_ROUTE_MAP.lock().unwrap();
-    let get_keys = get_mutex.keys();
-    let post_mutex = POST_ROUTE_MAP.lock().unwrap();
-    let post_keys = post_mutex.keys();
-
-    let delete_mutex = DELETE_ROUTE_MAP.lock().unwrap();
-    let delete_keys = delete_mutex.keys();
-    
-    let mut route_map: std::sync::MutexGuard<'_, Vec<HashMap<String, String>>> = ROUTE_MAP.lock().unwrap();
-
-    for key in get_keys {
-        let mut get = HashMap::new();
-        get.insert("method".to_string(), "GET".to_string());
-        get.insert("url".to_string(), key.to_string());
-        route_map.push(get);
-    }
-    for key in post_keys {
-        let mut post = HashMap::new();
-        post.insert("method".to_string(), "POST".to_string());
-        post.insert("url".to_string(), key.to_string());
-        route_map.push(post);
-    }
-    for key in delete_keys {
+        // 组装请求的介绍
         let mut delete = HashMap::new();
         delete.insert("method".to_string(), "DELETE".to_string());
-        delete.insert("url".to_string(), key.to_string());
+        delete.insert("url".to_string(), k.to_string());
+        delete.insert("desc".to_string(), desc.to_string());
         route_map.push(delete);
     }
-
 
     let vec = route_map.clone();
     let route_str = serde_json::to_string(&vec).unwrap();
@@ -106,7 +103,7 @@ pub fn add_route_handle() -> TokenStream {
         fn ordinary_route() -> Router {
             let app = Router::new();
             #(#route)*
-            let app = app.layer(middleware::from_fn(layer_util::login_authorization));
+            let app = app.layer(middleware::from_fn(login_authorization::middleware));
             // 合并匿名路由
             app
         }
@@ -120,7 +117,7 @@ pub fn add_route_handle() -> TokenStream {
         pub fn get_route() -> Vec<HashMap<String, String>> {
             let get_route = #route_str.to_string();
             let mut ret: Vec<HashMap<String, String>> = pro_json_util::str_to_object(&get_route).unwrap();
-            let server_url = env::var("server_address").expect("db url,初始化db失败");
+            let server_url = env::var("server_address").expect("服务器 url 初始化失败");
             for item in &mut ret {
                 let url = item.get("url");
                 let v = format!("http://{}{}", server_url, url.unwrap());
@@ -134,7 +131,7 @@ pub fn add_route_handle() -> TokenStream {
 }
 
 // 添加路由
-pub fn control_handle(item: TokenStream) -> TokenStream {
+pub fn control_handle(control_str: String, item: TokenStream) -> TokenStream {
     let item_clone = item.clone();
     let mut item_impl = parse_macro_input!(item_clone as ItemImpl);
     let type_ = item_impl.self_ty.deref_mut().clone();
@@ -153,33 +150,39 @@ pub fn control_handle(item: TokenStream) -> TokenStream {
             for attr in &method.attrs {
                 if let Some(ident) = attr.path().get_ident() {
                     let ident_str = ident.to_string();
-                    if String::from("get").eq(&ident_str) {
-                        let value = Some(attr.parse_args::<LitStr>());
-                        if let Some(lit_str) = value {
-                            let get_path = lit_str.unwrap().value();
-                            GET_ROUTE_MAP
-                                .lock()
-                                .unwrap()
-                                .insert(get_path.to_string(), (clazz.clone(), method_name.clone()));
-                        }
-                    }
-                    if String::from("post").eq(&ident_str) {
-                        let value = Some(attr.parse_args::<LitStr>());
-                        if let Some(lit_str) = value {
-                            let post_path = lit_str.unwrap().value();
-                            POST_ROUTE_MAP.lock().unwrap().insert(
-                                post_path.to_string(),
-                                (clazz.clone(), method_name.clone()),
-                            );
-                        }
-                    }
-                    if String::from("delete").eq(&ident_str) {
-                        let value = Some(attr.parse_args::<LitStr>());
-                        if let Some(lit_str) = value {
-                            let post_path = lit_str.unwrap().value();
-                            DELETE_ROUTE_MAP.lock().unwrap().insert(
-                                post_path.to_string(),
-                                (clazz.clone(), method_name.clone()),
+                    if ["get", "post", "delete"].contains(&ident_str.as_str()) {
+                        let mut attr_str = attr.meta.to_token_stream().to_string();
+                        attr_str = attr_util::get_attr_str(&ident_str, attr_str);
+                        let attr_map = attr_util::attr_to_map(attr_str);
+                        let url_option = attr_map.get("url");
+                        if let Some(url) = url_option {
+                            let mut begin_control_str = control_str.clone();
+                            if begin_control_str.ends_with("/") {
+                                begin_control_str = begin_control_str[0..begin_control_str.len() - 1].to_string();
+                            }
+                            let mut end_control_str = attr_util::trim_begin_end_quotes(url);
+                            if end_control_str.starts_with("/") {
+                                end_control_str = end_control_str[1..end_control_str.len()].to_string();
+                            }
+                            let url = begin_control_str + "/" + &end_control_str;
+                            let mut desc = "".to_string();
+                            if let Some(desc_str) = attr_map.get("desc") {
+                                desc = attr_util::trim_begin_end_quotes(desc_str);
+                            }
+                            let mut req_route_map = match ident_str.as_str() {
+                                "get" => GET_ROUTE_MAP.lock().unwrap(),
+                                "post" => POST_ROUTE_MAP.lock().unwrap(),
+                                "delete" => DELETE_ROUTE_MAP.lock().unwrap(),
+                                _ => panic!("异常类型 : {}", ident_str),
+                            };
+                            req_route_map.insert(url, (clazz.clone(), method_name.clone(), desc));
+                        } else {
+                            println!(
+                                " {} {}没有设置url:{},attr_map:{:?} ",
+                                clazz.clone(),
+                                method_name.clone(),
+                                ident_str,
+                                attr_map
                             );
                         }
                     }
@@ -203,5 +206,4 @@ pub fn control_handle(item: TokenStream) -> TokenStream {
         }
     };
     expanded.into()
-
 }

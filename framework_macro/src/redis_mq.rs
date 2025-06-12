@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use std::ops::DerefMut;
 use syn::FnArg::Typed;
-use syn::{parse_macro_input, ImplItem, ItemImpl, LitStr, PathSegment, Type};
+use syn::{parse_macro_input, ImplItem, ItemImpl, PathSegment, Type};
 
-use crate::redis_mq_que_model::RedisMqModel;
+use crate::attr_util;
 
 // 添加路由
 pub fn handle(item: TokenStream) -> TokenStream {
@@ -27,9 +27,8 @@ pub fn handle(item: TokenStream) -> TokenStream {
             for attr in &method.attrs {
                 if let Some(ident) = attr.path().get_ident() {
                     let ident_str = ident.to_string();
-                    if String::from("redis_mq_pub").eq(&ident_str)
-                        || String::from("redis_mq_que").eq(&ident_str)
-                    {
+                    if ["redis_mq_pub","redis_mq_que"].contains(&ident_str.as_str()){
+                        // 提取mq参数
                         let mut arg_ident = format_ident!("String");
                         let first_fn_arg = method.sig.inputs.first().unwrap();
                         if let Typed(arg_path_type) = first_fn_arg {
@@ -43,45 +42,54 @@ pub fn handle(item: TokenStream) -> TokenStream {
                             }
                         }
                         if String::from("redis_mq_pub").eq(&ident_str) {
-                            let value = Some(attr.parse_args::<LitStr>());
-                            if let Some(lit_str) = value {
-                                let mq_path = lit_str.unwrap().value();
-                                mq_fn.push( quote! {
-                                    tokio::task::spawn(async {
-                                        {
-                                            let mut con = pro_redis_util::REDIS_POOL.get().unwrap();
+                            // 取出注解字符串
+                            let attr_str = attr.meta.to_token_stream().to_string();
+                            // 去除注解名和前后括号
+                            let attr_str = attr_util::get_attr_str("redis_mq_pub", attr_str);
+                            // 去除星号
+                            let mq_path = attr_util::trim_begin_end_quotes(attr_str);
+                            mq_fn.push( quote! {
+                                pro_thread_util::fiber(async {
+                                    {
+                                        let mut con = pro_redis_util::get_conn();
+                                        // 订阅频道
+                                        let mut pubsub = con.as_pubsub();
+                                        pubsub
+                                        .subscribe(pro_redis_mq_msg_util::get_msg_pub_key(#mq_path))
+                                        .unwrap();
+                                        loop {
                                             // 订阅频道
-                                            let mut pubsub = con.as_pubsub();
-                                            pubsub
-                                            .subscribe(pro_redis_mq_msg_util::get_msg_pub_key(#mq_path))
-                                            .unwrap();
-                                            loop {
-                                                // 订阅频道
-                                                let get_message = pubsub.get_message();
-                                                if let Ok(msg) = get_message {
-                                                    let get_payload: Result<String, redis::RedisError> = msg.get_payload();
-                                                    if let Ok(payload) = get_payload {
-                                                        let str_to_object_result: Result<#arg_ident, serde_json::Error> = pro_json_util::str_to_object(payload.as_str());
-                                                        if let Ok(str_to_object) = str_to_object_result {
-                                                            #clazz_ident::#method_ident(str_to_object).await;
-                                                        } else {
-                                                            info!("{}消息反序列化异常:{}",#mq_path,payload.as_str());
-                                                        }
-
+                                            let get_message = pubsub.get_message();
+                                            if let Ok(msg) = get_message {
+                                                let get_payload: Result<String, redis::RedisError> = msg.get_payload();
+                                                if let Ok(payload) = get_payload {
+                                                    let str_to_object_result: Result<#arg_ident, serde_json::Error> = pro_json_util::str_to_object(payload.as_str());
+                                                    if let Ok(str_to_object) = str_to_object_result {
+                                                        #clazz_ident::#method_ident(str_to_object).await;
+                                                    } else {
+                                                        info!("{}消息反序列化异常:{}",#mq_path,payload.as_str());
                                                     }
+
                                                 }
                                             }
                                         }
-                                    });
+                                    }
                                 });
-                            }
+                            });
                         }
                         if String::from("redis_mq_que").eq(&ident_str) {
-                            let redis_mq_model: RedisMqModel = attr.parse_args().unwrap();
-                            let base_que_str = redis_mq_model.que.value();
-                            let group_str = redis_mq_model.group.value();
+                            // 取出注解字符串
+                            let attr_str = attr.meta.to_token_stream().to_string();
+                            // 去除注解名和前后括号
+                            let attr_str = attr_util::get_attr_str("redis_mq_que", attr_str);
+                            // 转换为map
+                            let attr_map = attr_util::attr_to_map(attr_str);
+                            let base_que_str = attr_map.get("que").unwrap().clone();
+                            let group_str = attr_map.get("group").unwrap().clone();
+                            let base_que_str = attr_util::trim_begin_end_quotes( base_que_str);
+                            let group_str = attr_util::trim_begin_end_quotes( group_str);
                             mq_fn.push( quote! {
-                                tokio::task::spawn(async {
+                                pro_thread_util::fiber(async {
                                     {
                                         let que_str = pro_redis_mq_msg_util::get_msg_que_key(#base_que_str);
                                         // 判断队列是否存在
@@ -92,7 +100,7 @@ pub fn handle(item: TokenStream) -> TokenStream {
                                                 &que_str, 
                                                 #group_str,
                                                 pro_snowflake_util::next_id_str(),
-                                            ).await;
+                                            );
                                             if let Some(message) = message_option {
                                                 let keys = message.keys;
                                                 for item in keys {
@@ -100,13 +108,9 @@ pub fn handle(item: TokenStream) -> TokenStream {
                                                     for msg in msg_ids {
                                                         let map = msg.map;
                                                         let payload_value = map.get( "payload").unwrap();
-                                                        if let Data(payload) = payload_value {
-
-
+                                                        if let BulkString(payload) = payload_value {
                                                             let payload = String::from_utf8(payload.clone()).unwrap();
                                                             let str_to_object_result: Result<#arg_ident, serde_json::Error> = pro_json_util::str_to_object(payload.as_str());
-
-
                                                             if let Ok(str_to_object) = str_to_object_result {
                                                                 #clazz_ident::#method_ident(str_to_object).await;
                                                             } else {
@@ -114,8 +118,8 @@ pub fn handle(item: TokenStream) -> TokenStream {
                                                             }
                                                         }
                                                         let id = msg.id;
-                                                        let _ = pro_redis_util::streams_xack(&que_str, #group_str, id.clone()).await;
-                                                        let _ = pro_redis_util::streams_xdel(&que_str, id).await;
+                                                        let _ = pro_redis_util::streams_xack(&que_str, #group_str, id.clone());
+                                                        let _ = pro_redis_util::streams_xdel(&que_str, id);
                                                     }
                                                 }
                                             }

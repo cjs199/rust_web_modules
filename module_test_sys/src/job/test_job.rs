@@ -1,9 +1,12 @@
 use framework_macro::{interval_job, job, redis_lock_job};
 use framework_redis::utils::{pro_redis_mq_msg_util, pro_redis_util};
-use framework_utils::pro_job_util::TimerTask;
 use framework_utils::pro_time_util;
 use idgenerator::*;
 use log::info;
+use framework_utils::pro_thread_util;
+use framework_utils::pro_snowflake_util;
+use framework_redis::utils::pro_redis_lock_util;
+use tokio::time::{Instant, Duration, interval_at};
 
 // 本地缓存清理定时任务
 pub struct TestJobQue {}

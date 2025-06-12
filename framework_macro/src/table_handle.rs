@@ -1,189 +1,192 @@
+use framework_utils::pro_collection_util;
+use framework_utils::pro_str_util;
 use proc_macro::TokenStream;
 extern crate proc_macro;
+use crate::utils::table_dto_to_sql_util;
+use quote::format_ident;
 use quote::quote;
-use quote::{format_ident, ToTokens};
-use syn::{parse_macro_input, Data, DeriveInput};
+use syn::{parse_macro_input, DeriveInput};
 
-pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
+const CONST_AND: &str = "AND";
+const CONST_OR: &str = "OR";
+
+pub fn table(attr: TokenStream, input: TokenStream) -> TokenStream {
     let input_str = input.to_string();
-    const CONST_AND: &str = "AND";
-    const CONST_OR: &str = "OR";
 
     let input = parse_macro_input!(input as DeriveInput);
-    let table_name_str = attr.to_string();
 
-    let table_name = format_ident!("{}", table_name_str);
+    let create_table_dto_to_sql =
+        table_dto_to_sql_util::create_table_dto_to_sql(attr.to_string(), input);
 
-    let data = input.data;
+    let table_name_str = create_table_dto_to_sql.table_name;
+
+    let table_name_ident = format_ident!("{}", table_name_str);
+
+    // 获取结构名称
+    let clazz_name_str = create_table_dto_to_sql.clazz_name;
+
+    let clazz_name_ident = format_ident!("{}", clazz_name_str);
+
+    let clazz_name_query_ident = format_ident!("{}SqlQuery", clazz_name_str);
 
     let mut lombok_data_fun = quote! {};
 
     let mut fields = quote! {};
-
-    let mut field_arr = Vec::new();
+    
+    // 提取列名
+    let column_name_arr = pro_collection_util::collect_field_values(&create_table_dto_to_sql.column_name, |field| field.0.clone());
 
     // 新增更新监控列
     let mut insert_monitor_column = Vec::new();
+
     let mut update_monitor_column = Vec::new();
 
-    let mut id = String::from("");
-
-    let mut id_ident = format_ident!("id");
-
+    // 初始化id
+    let id_column = create_table_dto_to_sql.id_column;
+    let id_column_name = id_column.0;
+    let id_column_name_ident = format_ident!("{}", id_column_name);
     let mut version_lock = false;
 
-    match data {
-        Data::Struct(s) => {
-            // 找到id,进行初始化
-            for f in &s.fields {
-                let attr_name = f.ident.to_token_stream();
-                let attr_name_str = attr_name.to_string();
-                for attr in f.attrs.clone() {
-                    if let Some(ident) = attr.path().get_ident() {
-                        let ident_str = ident.to_string();
-                        if String::from("id") == ident_str {
-                            id = attr_name_str.clone();
-                            id_ident = format_ident!("{}", id);
-                        }
-                    }
-                }
-            }
-            // 遍历成员
-            for f in s.fields {
-                let attr_name = f.ident.to_token_stream();
-                let attr_name_str = attr_name.to_string();
-                match attr_name_str.as_str() {
-                    "create_by" => {
-                        insert_monitor_column.push(quote! {
-                            if let None = #table_name.#id_ident {
-                                #table_name.create_by = Some(pro_base_security_util::get_login_user_id());
-                            }
-                        });
-                    }
-                    "create_time" => {
-                        insert_monitor_column.push(quote! {
-                            if let None = #table_name.create_time {
-                                #table_name.create_time = Some(Utc::now());
-                            }
-                        });
-                    }
-                    "update_by" => {
-                        insert_monitor_column.push(quote! {
-                            if let None = #table_name.update_by {
-                                #table_name.update_by = Some(pro_base_security_util::get_login_user_id());
-                            }
-                        });
-                        update_monitor_column.push(quote! {
-                            #table_name.update_by = Some(pro_base_security_util::get_login_user_id());
-                        });
-                    }
-                    "update_time" => {
-                        insert_monitor_column.push(quote! {
-                            if let None = #table_name.update_time {
-                                #table_name.update_time = Some(Utc::now());
-                            }
-                        });
-                        update_monitor_column.push(quote! {
-                            #table_name.update_time = Some(Utc::now());
-                        });
-                    }
-                    "version" => {
-                        let col_mon = quote! {
-                            if let Some(v) = #table_name.version {
-                                #table_name.version = Some(v + 1);
-                            } else {
-                                #table_name.version = Some(1);
-                            }
-                        };
-                        insert_monitor_column.push(col_mon.clone());
-                        update_monitor_column.push(col_mon.clone());
-                        version_lock = true;
-                    }
-                    _ => (),
-                }
+    
+    // 像select等查询时选择的列
+    let select_column_str =
+        pro_str_util::format_and_join(&column_name_arr, |field| format!("`{}`", field), ",");
 
-                field_arr.push(attr_name_str.clone());
-                let attr_ty = f.ty.to_token_stream();
-                // 拼接函数名称
-                let get_name = format_ident!("get_{}", attr_name_str.clone());
-                let set_name = format_ident!("set_{}", attr_name_str.clone());
+    // 更新时设置的列sql
+    let update_set_sql =
+        pro_str_util::format_and_join(&column_name_arr, |field| format!("`{}`=?", field), ",");
 
-                let t = quote! {
-                    pub fn #get_name(&self)->&#attr_ty{
-                        &self.#attr_name
-                    }
-                    pub fn #set_name(&mut self, val:#attr_ty){
-                        self.#attr_name = val
-                    }
-                };
-                // 由子段拼接成主段
-                lombok_data_fun = quote! {
-                    #lombok_data_fun
-                    #t
-                };
+    // 设置插入时val的数据
+    let insert_sql = pro_str_util::format_and_join(&column_name_arr, |_| String::from("?"), ",");
 
-                let field_name = format_ident!("FIELD_{}", attr_name_str.clone().to_uppercase());
-                let field_val = format!("{}", attr_name.clone());
-
-                let fd = quote! {
-                    pub const #field_name: &str = #field_val;
-                };
-
-                fields = quote! {
-                    #fields
-                   #fd
-                };
-            }
-
-            // 如果id是None,那么插入和更新时,需要将id初始化
-            insert_monitor_column.push(quote! {
-                if let None = #table_name.#id_ident {
-                    #table_name.#id_ident = Some(pro_snowflake_util::next_id());
-                }
-            });
-        }
-        _ => (),
-    }
-
-    // 获取结构名称
-    let clazz_name = input.ident.to_token_stream();
-    let clazz_name_str = input.ident.to_token_stream().to_string();
-
-    let mut column_sql = String::from("");
-    let mut update_set_sql = String::from("");
-    let mut val_sql = String::from("");
+    // 插入更新时,绑定实体类的字段
     let mut bind_sql = Vec::new();
+
+    // where条件,非空字段绑定
     let mut bind_not_none_where = Vec::new();
+
+    // 插入更新时,绑定实体类的字段
     let mut bind_not_none_val = Vec::new();
 
-    let mut select_column = Vec::new();
 
-    {
-        for column in field_arr {
-            column_sql.push_str(format!("`{}`,", column).as_str());
+    for column in create_table_dto_to_sql.column_name {
+        let column_name = column.0;
+        let column_type = column.1;
 
-            update_set_sql.push_str(format!("`{}`=?,", column).as_str());
+        let column_name_ident = format_ident!("{}", column_name.clone());
+        let mut column_type_ident = proc_macro2::TokenStream::new();
+        column_type_ident.extend(column_type.parse::<proc_macro2::TokenStream>().unwrap());
 
-            val_sql.push_str("?,");
-            let column_name = format_ident!("{}", column);
-            bind_sql.push(quote! {.bind(#table_name.#column_name)});
+        {
+            // 创建时间,更新时间,版本控制等等
+            match column_name.as_str() {
+                "create_by" => {
+                    insert_monitor_column.push(quote! {
+                            if let None = #table_name_ident.#id_column_name_ident {
+                                #table_name_ident.create_by = Some(pro_base_security_util::get_login_user_id());
+                            }
+                        });
+                }
+                "create_time" => {
+                    insert_monitor_column.push(quote! {
+                        if let None = #table_name_ident.create_time {
+                            #table_name_ident.create_time = Some(Utc::now());
+                        }
+                    });
+                }
+                "update_by" => {
+                    insert_monitor_column.push(quote! {
+                            if let None = #table_name_ident.update_by {
+                                #table_name_ident.update_by = Some(pro_base_security_util::get_login_user_id());
+                            }
+                        });
+                    update_monitor_column.push(quote! {
+                            #table_name_ident.update_by = Some(pro_base_security_util::get_login_user_id());
+                        });
+                }
+                "update_time" => {
+                    insert_monitor_column.push(quote! {
+                        if let None = #table_name_ident.update_time {
+                            #table_name_ident.update_time = Some(Utc::now());
+                        }
+                    });
+                    update_monitor_column.push(quote! {
+                        #table_name_ident.update_time = Some(Utc::now());
+                    });
+                }
+                "version" => {
+                    let col_mon = quote! {
+                        if let Some(v) = #table_name_ident.version {
+                            #table_name_ident.version = Some(v + 1);
+                        } else {
+                            #table_name_ident.version = Some(1);
+                        }
+                    };
+                    insert_monitor_column.push(col_mon.clone());
+                    update_monitor_column.push(col_mon.clone());
+                    version_lock = true;
+                }
+                _ => (),
+            }
+        }
 
-            select_column.push(format!("`{}`", column));
+        {
+            // 拼接get set等函数名称
+            let get_name = format_ident!("get_{}", column_name.clone());
+            let set_name = format_ident!("set_{}", column_name.clone());
 
+            let t = quote! {
+                pub fn #get_name(&self)->&#column_type_ident{
+                    &self.#column_name_ident
+                }
+                pub fn #set_name(&mut self, val:#column_type_ident){
+                    self.#column_name_ident = val
+                }
+            };
+
+            // 循环列,拼接对应的get set方法
+            lombok_data_fun = quote! {
+                #lombok_data_fun
+                #t
+            };
+
+            let field_name = format_ident!("FIELD_{}", column_name.to_uppercase());
+            let field_val = format!("{}", column_name.clone());
+
+            let fd = quote! {
+                pub const #field_name: &str = #field_val;
+            };
+
+            fields = quote! {
+                #fields
+               #fd
+            };
+        }
+    
+        {
+            // 新增,更新,where条件等绑定参数设置
+            bind_sql.push(quote! {.bind(#table_name_ident.#column_name_ident)});
             bind_not_none_where.push(quote! {
-                if let Some(v) = &#table_name.#column_name {
-                    not_none_where.push(format!("`{}`=?", #column));
+                if let Some(v) = &#table_name_ident.#column_name_ident {
+                    not_none_where.push(format!("`{}`=?", #column_name));
                 }
             });
             bind_not_none_val.push(quote! {
-                if let Some(v) = &#table_name.#column_name {
+                if let Some(v) = &#table_name_ident.#column_name_ident {
                     query_as = query_as.bind(v);
                 }
             });
         }
+    
     }
 
-    let select_column_str = select_column.join(",");
+    // 如果id是None,那么插入和更新时,需要将id初始化
+    insert_monitor_column.push(quote! {
+        if let None = #table_name_ident.#id_column_name_ident {
+            #table_name_ident.#id_column_name_ident = Some(pro_snowflake_util::next_id());
+        }
+    });
+
 
     // 非None时绑定
     let bind_code = quote! {
@@ -287,9 +290,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
 
     let insert_sql = format!(
         "INSERT INTO `{}` ({}) VALUES ({})",
-        table_name_str,
-        &column_sql[0..column_sql.len() - 1],
-        &val_sql[0..val_sql.len() - 1]
+        table_name_str, select_column_str, insert_sql
     );
 
     let mut version_bind_begin = quote! {};
@@ -298,7 +299,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
     let update_sql = {
         if version_lock {
             version_bind_begin = quote! {
-                let version = #table_name.version.clone();
+                let version = #table_name_ident.version.clone();
             };
 
             version_bind_end = quote! {
@@ -306,25 +307,18 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
             };
             format!(
                 "UPDATE `{}` SET {} WHERE `{}` = ? AND version = ?",
-                table_name_str,
-                &update_set_sql[0..update_set_sql.len() - 1],
-                id
+                table_name_str, update_set_sql, id_column_name
             )
         } else {
             format!(
                 "UPDATE `{}` SET {} WHERE `{}` = ?",
-                table_name_str,
-                &update_set_sql[0..update_set_sql.len() - 1],
-                id
+                table_name_str, update_set_sql, id_column_name
             )
         }
     };
-
-    let clazz_name_query = format_ident!("{}SqlQuery", clazz_name_str);
-
     let expanded = quote! {
 
-        impl #clazz_name {
+        impl #clazz_name_ident {
 
             #lombok_data_fun
 
@@ -333,17 +327,17 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
             pub const TABLE_NAME: &str = #table_name_str;
 
             pub fn get_table_name()->String{
-                #clazz_name::TABLE_NAME.to_string()
+                #clazz_name_ident::TABLE_NAME.to_string()
             }
 
-            pub fn clone(&self) -> #clazz_name {
+            pub fn clone(&self) -> #clazz_name_ident {
                 let object_to_str = pro_json_util::object_to_str(&self);
                 pro_json_util::str_to_object(&object_to_str).unwrap()
             }
 
         }
 
-        pub struct #clazz_name_query {
+        pub struct #clazz_name_query_ident {
             select_columns: Vec<String>,
             set_columns: Vec<String>,
             set_bind_value: Vec<Box<dyn Any + Send + Sync>>,
@@ -357,10 +351,10 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
             order_by_columns: Vec<String>,
         }
 
-        impl #clazz_name_query {
+        impl #clazz_name_query_ident {
 
-            pub fn new() -> #clazz_name_query {
-                #clazz_name_query {
+            pub fn new() -> #clazz_name_query_ident {
+                #clazz_name_query_ident {
                     select_columns: Vec::new(),
                     set_columns: Vec::new(),
                     set_bind_value: Vec::new(),
@@ -467,9 +461,9 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 query_as.fetch_all(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn find_all_to_entity(&mut self) -> Result<Vec<#clazz_name>, sqlx::Error> {
+            pub async fn find_all_to_entity(&mut self) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
                 let sql = self.get_select_sql();
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #bind_fn
                 // 这里,因为 query_as 被map以后,返回类型发生了改变,必须用 let 重新接收一下
                 query_as.fetch_all(DB_ONCE_LOCK.get()).await
@@ -488,9 +482,9 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 query_as.fetch_one(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn find_one_to_entity(&mut self) -> Result<#clazz_name, sqlx::Error> {
+            pub async fn find_one_to_entity(&mut self) -> Result<#clazz_name_ident, sqlx::Error> {
                 let sql = self.get_select_sql();
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #bind_fn
                 // 这里,因为 query_as 被map以后,返回类型发生了改变,必须用 let 重新接收一下
                 query_as.fetch_one(DB_ONCE_LOCK.get()).await
@@ -506,7 +500,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 self
             }
 
-            pub async fn find_paged_result_to_entity(&mut self) -> PageResult<#clazz_name>   {
+            pub async fn find_paged_result_to_entity(&mut self) -> PageResult<#clazz_name_ident>   {
                 let len = self.where_columns.len();
                 let count:i64 = {
                     // 搜索count
@@ -535,10 +529,10 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                     }
                 } else {
                     let sql = self.get_select_sql();
-                    let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                    let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                     #bind_fn
                     // 这里,因为 query_as 被map以后,返回类型发生了改变,必须用 let 重新接收一下
-                    let items: Vec<#clazz_name> = query_as.fetch_all(DB_ONCE_LOCK.get()).await.unwrap();
+                    let items: Vec<#clazz_name_ident> = query_as.fetch_all(DB_ONCE_LOCK.get()).await.unwrap();
                     PageResult {
                         content: items,
                         totalElements: count,
@@ -686,7 +680,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 self
             }
 
-            pub async fn direct_find_all_to_entity(#table_name: #clazz_name) -> Result<Vec<#clazz_name>, sqlx::Error> {
+            pub async fn direct_find_all_to_entity(#table_name_ident: #clazz_name_ident) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
                 let mut not_none_where = Vec::new();
                 #(#bind_not_none_where)*
                 let sql;
@@ -699,21 +693,21 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                         "SELECT {} FROM `{}` WHERE {}" , #select_column_str , #table_name_str, not_none_where.join(" and")
                     );
                 }
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #(#bind_not_none_val)*
                 query_as.fetch_all(DB_ONCE_LOCK.get()).await
             }
 
             // 这是一个异步函数，用于获取指定表的分页查询结果，并以自定义的分页结果结构体形式返回。
-            pub async fn direct_find_paged_result(#table_name: #clazz_name, page: i64, limit:i64) -> PageResult<#clazz_name>   {
-                #clazz_name_query::direct_find_sorted_paged_result(#table_name, #id, Sort::Desc, page, limit).await
+            pub async fn direct_find_paged_result(#table_name_ident: #clazz_name_ident, page: i64, limit:i64) -> PageResult<#clazz_name_ident>   {
+                #clazz_name_query_ident::direct_find_sorted_paged_result(#table_name_ident, #id_column_name, Sort::Desc, page, limit).await
             }
 
-            pub async fn direct_find_sorted_paged_result (#table_name: #clazz_name, order_by_column: impl Into<String>,sort: Sort, page: i64, limit:i64) -> PageResult<#clazz_name>   {
+            pub async fn direct_find_sorted_paged_result (#table_name_ident: #clazz_name_ident, order_by_column: impl Into<String>,sort: Sort, page: i64, limit:i64) -> PageResult<#clazz_name_ident>   {
                 // 克隆传入的实体对象，可能是为了在后续操作中不影响原始对象。
-                let clone_entity = #table_name.clone();
+                let clone_entity = #table_name_ident.clone();
                 // 调用另一个异步函数获取指定表的记录总数。
-                let direct_count = #clazz_name_query::direct_count(#table_name).await;
+                let direct_count = #clazz_name_query_ident::direct_count(#table_name_ident).await;
                 if(direct_count == 0){
                     PageResult {
                         content: Vec::new(),
@@ -722,7 +716,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                     }
                 }else{
                     // 调用另一个异步函数进行分页查询，获取一页的数据。
-                    let direct_find_by_entity_and_page = #clazz_name_query::direct_find_entities_with_sort_and_pagination(clone_entity,order_by_column,sort, page, limit).await.unwrap();
+                    let direct_find_by_entity_and_page = #clazz_name_query_ident::direct_find_entities_with_sort_and_pagination(clone_entity,order_by_column,sort, page, limit).await.unwrap();
                     // 将分页查询结果封装到自定义的分页结果结构体中，并转换为 JSON 格式返回。
                     PageResult {
                         content: direct_find_by_entity_and_page,
@@ -734,7 +728,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
 
             // 计算指定表的记录总数的异步函数。
             // 如果有非空的条件，将根据这些条件进行计数，否则对整个表进行计数。
-            pub async fn direct_count(#table_name: #clazz_name) -> i64 {
+            pub async fn direct_count(#table_name_ident: #clazz_name_ident) -> i64 {
                 // 创建一个可变的空向量，用于存储非空条件。
                 let mut not_none_where = Vec::new();
                 #(#bind_not_none_where)*
@@ -759,11 +753,11 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
             // 根据条件和分页参数查找指定表中的记录，并返回结果列表的异步函数。
             // 如果有非空的条件，将根据这些条件进行查询，否则对整个表进行查询。
             // page从1开始,但是经过转换以后数据库中是从0开始,所以开始时减1
-            pub async fn direct_find_entities_by_page(#table_name: #clazz_name, page: i64, limit: i64) -> Result<Vec<#clazz_name>, sqlx::Error> {
-                #clazz_name_query::direct_find_entities_with_sort_and_pagination(#table_name, #id, Sort::Desc, page, limit).await
+            pub async fn direct_find_entities_by_page(#table_name_ident: #clazz_name_ident, page: i64, limit: i64) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
+                #clazz_name_query_ident::direct_find_entities_with_sort_and_pagination(#table_name_ident, #id_column_name, Sort::Desc, page, limit).await
             }
 
-            pub async fn direct_find_entities_with_sort_and_pagination(#table_name: #clazz_name, order_by_column: impl Into<String>,sort: Sort, page: i64, limit: i64) -> Result<Vec<#clazz_name>, sqlx::Error> {
+            pub async fn direct_find_entities_with_sort_and_pagination(#table_name_ident: #clazz_name_ident, order_by_column: impl Into<String>,sort: Sort, page: i64, limit: i64) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
                 // 创建一个可变的空向量，用于存储非空条件。
                 let order_by_column = pro_str_util::camel_to_snake(order_by_column);
                 let order_by_column = order_by_column.trim();
@@ -783,41 +777,41 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                     );
                 }
                 // 创建一个可变的查询对象，用于执行查询操作。
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #(#bind_not_none_val)*
                 // 执行查询并获取所有结果，如果有错误则直接 panic。
                 query_as.fetch_all(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn direct_find_all() -> Result<Vec<#clazz_name>, sqlx::Error> {
-                sqlx::query_as::<_, #clazz_name>(#fetch_all_sql).fetch_all(DB_ONCE_LOCK.get()).await
+            pub async fn direct_find_all() -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
+                sqlx::query_as::<_, #clazz_name_ident>(#fetch_all_sql).fetch_all(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn direct_find_by_id(boxed: Box<dyn Any + Send + Sync>) -> Result<#clazz_name, sqlx::Error> {
-                #clazz_name_query::direct_find_one_by_column(#id,boxed).await
+            pub async fn direct_find_by_id(boxed: Box<dyn Any + Send + Sync>) -> Result<#clazz_name_ident, sqlx::Error> {
+                #clazz_name_query_ident::direct_find_one_by_column(#id_column_name,boxed).await
             }
 
-            pub async fn direct_find_by_id_vec(boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name>, sqlx::Error> {
-                #clazz_name_query::direct_find_all_by_condition(#id,Condition::In,boxed).await
+            pub async fn direct_find_by_id_vec(boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
+                #clazz_name_query_ident::direct_find_all_by_condition(#id_column_name,Condition::In,boxed).await
             }
 
-            pub async fn direct_find_one_by_column<T: Into<String>>(column: T, boxed: Box<dyn Any + Send + Sync>) -> Result<#clazz_name, sqlx::Error> {
+            pub async fn direct_find_one_by_column<T: Into<String>>(column: T, boxed: Box<dyn Any + Send + Sync>) -> Result<#clazz_name_ident, sqlx::Error> {
                 let column_name = pro_str_util::camel_to_snake(column);
                 let sql = format!("SELECT {} FROM `{}` WHERE `{}` = ? ", #select_column_str, #table_name_str, column_name);
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #bind_code
                 query_as.fetch_one(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn direct_find_all_by_column<T: Into<String>>(column: T, boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name>, sqlx::Error> {
+            pub async fn direct_find_all_by_column<T: Into<String>>(column: T, boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
                 let column_name = pro_str_util::camel_to_snake(column);
                 let sql = format!("SELECT {} FROM `{}` WHERE `{}` = ? ", #select_column_str, #table_name_str, column_name);
-                let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                 #bind_code
                 query_as.fetch_all(DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn direct_find_all_by_condition<T: Into<String>>(column: T,condition: Condition, boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name>, sqlx::Error> {
+            pub async fn direct_find_all_by_condition<T: Into<String>>(column: T,condition: Condition, boxed: Box<dyn Any + Send + Sync>) -> Result<Vec<#clazz_name_ident>, sqlx::Error> {
                 let condition_str = match condition {
                     // 大于
                     Condition::gt => ">",
@@ -841,17 +835,17 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                         val_col.push("?");
                     }
                     let sql = format!("SELECT {} FROM `{}` WHERE `{}` {} ( {} ) ", #select_column_str, #table_name_str, column_name, condition_str , val_col.join(","));
-                    let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                    let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                     #bind_code
                     query_as.fetch_all(DB_ONCE_LOCK.get()).await
                 } else if Condition::like == condition {
                     let sql = format!("SELECT {} FROM `{}` WHERE `{}` {} '%{}%' ", #select_column_str, #table_name_str, column_name, condition_str, pro_collection_util::box_to_string(boxed));
-                    let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                    let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                     query_as.fetch_all(DB_ONCE_LOCK.get()).await
 
                 } else {
                     let sql = format!("SELECT {} FROM `{}` WHERE `{}` {} ? ", #select_column_str, #table_name_str, column_name, condition_str);
-                    let mut query_as = sqlx::query_as::<_, #clazz_name>(&sql);
+                    let mut query_as = sqlx::query_as::<_, #clazz_name_ident>(&sql);
                     #bind_code
                     query_as.fetch_all(DB_ONCE_LOCK.get()).await
                 }
@@ -911,14 +905,14 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 }
             }
 
-            pub async fn direct_insert(mut #table_name: #clazz_name) ->  MySqlQueryResult {
-                #clazz_name_query::direct_insert_by_exec(#table_name,DB_ONCE_LOCK.get()).await
+            pub async fn direct_insert(mut #table_name_ident: #clazz_name_ident) ->  MySqlQueryResult {
+                #clazz_name_query_ident::direct_insert_by_exec(#table_name_ident,DB_ONCE_LOCK.get()).await
             }
 
-            pub async fn direct_insert_vec(mut entity_vec: Vec<#clazz_name>) {
-                let group_vec_by_size = pro_collection_util::group_vec_by_size(&entity_vec, 50);
+            pub async fn direct_insert_vec(mut entity_vec: Vec<#clazz_name_ident>) {
+                let group_by_vec_size = pro_collection_util::group_by_vec_size(&entity_vec, 50);
                 let get = DB_ONCE_LOCK.get();
-                for group_vec in group_vec_by_size {
+                for group_vec in group_by_vec_size {
                     let temp_sql = String::from(#insert_sql);
                     // 生成sql
                     let index = temp_sql.find("VALUES").unwrap();
@@ -932,7 +926,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                     let mut query = sqlx::query(sql_base.as_str());
                     // 绑定数据
                     for entity in group_vec {
-                        let mut #table_name = entity.clone();
+                        let mut #table_name_ident = entity.clone();
                         #(#insert_monitor_column)*
                         query = query
                         #(#bind_sql)*
@@ -942,8 +936,8 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 }
             }
 
-            pub async fn direct_update(mut #table_name: #clazz_name) ->  MySqlQueryResult   {
-                #clazz_name_query::direct_update_by_exec(#table_name,DB_ONCE_LOCK.get()).await
+            pub async fn direct_update(mut #table_name_ident: #clazz_name_ident) ->  MySqlQueryResult   {
+                #clazz_name_query_ident::direct_update_by_exec(#table_name_ident,DB_ONCE_LOCK.get()).await
             }
 
             pub async fn single_read_only(sql: String) -> HashMap<String, String> {
@@ -1032,7 +1026,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
 
             }
 
-            pub async fn direct_insert_by_exec<'c, EXEC>(mut #table_name: #clazz_name, pool: EXEC) ->  MySqlQueryResult
+            pub async fn direct_insert_by_exec<'c, EXEC>(mut #table_name_ident: #clazz_name_ident, pool: EXEC) ->  MySqlQueryResult
             where
                 EXEC: Executor<'c, Database = MySql>,
             {
@@ -1046,7 +1040,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
             // println!("{}", direct_update.rows_affected());
             // 判断是否更新成功案例
             // println!("{}", direct_update.rows_affected() > 0);
-            pub async fn direct_update_by_exec<'c, EXEC>(mut #table_name: #clazz_name, pool: EXEC) ->  MySqlQueryResult
+            pub async fn direct_update_by_exec<'c, EXEC>(mut #table_name_ident: #clazz_name_ident, pool: EXEC) ->  MySqlQueryResult
             where
                 EXEC: Executor<'c, Database = MySql>,
             {
@@ -1054,7 +1048,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
                 #(#update_monitor_column)*
                 sqlx::query(#update_sql)
                     #(#bind_sql)*
-                    .bind(#table_name.#id_ident)
+                    .bind(#table_name_ident.#id_column_name_ident)
                     #version_bind_end
                     .execute(pool).await.unwrap()
             }
@@ -1063,10 +1057,7 @@ pub fn table_handle(attr: TokenStream, input: TokenStream) -> TokenStream {
         }
 
     };
-
     let ret_str = "#[derive(FromRow)]  ".to_owned() + &input_str + expanded.to_string().as_str();
-    // pro_file_util::write_all(r"D:\java_ws\rust_modules\module_sys_debug\src\debug.rs",ret_str.as_str());
-    // println!("===={}", ret_str.as_str());
     let mut ret_token_stream = TokenStream::new();
     ret_token_stream.extend(ret_str.parse::<TokenStream>().unwrap());
     ret_token_stream

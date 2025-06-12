@@ -19,7 +19,9 @@ log = "0.4.21"
 
 framework_macro = { path = "../framework_macro" }
 
-idgenerator = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 
-r2d2_redis = "0.14.0"
+redis = { version = "0.27.6", features = ["r2d2"] }
+r2d2 = "0.8.10"
+
+crossbeam = "0.8.4"

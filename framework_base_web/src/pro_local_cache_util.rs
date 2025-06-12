@@ -1,13 +1,16 @@
 use framework_macro::{job, redis_lock_job};
+use framework_redis::utils::pro_redis_lock_util;
 use framework_redis::utils::pro_redis_util;
-use framework_utils::{pro_job_util::TimerTask, pro_json_util};
+use framework_utils::pro_json_util;
+use framework_utils::pro_snowflake_util;
+use framework_utils::pro_thread_util;
 use framework_utils::{pro_sqlite_util, pro_time_util};
 use lazy_static::lazy_static;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::{collections::HashMap, sync::Mutex};
-use idgenerator::*;
+use tokio::time::{interval_at, Duration, Instant};
 
 // 硬盘缓存和内存缓存默认过期时间 ms
 const TIMEOUT: i64 = 259200000;
@@ -18,15 +21,14 @@ const DISK: &str = "disk";
 
 lazy_static! {
     pub static ref MAP_CACHE: Mutex<HashMap<String, Vec<u8>>> = Mutex::new(HashMap::new());
+    pub static ref INSERT_VEC: Mutex<Vec<(i64, String, String)>> = Mutex::new(Vec::new());
 }
-
 
 // 本地缓存清理定时任务
 pub struct LocalCacheJob {}
 
 #[job]
 impl LocalCacheJob {
-
     #[redis_lock_job(job_name = "CacheJob_delete", interval_millis = 1000)]
     pub async fn delete() {
         let current_timeout = pro_time_util::get_current_milliseconds();
@@ -59,6 +61,50 @@ impl LocalCacheJob {
         }
     }
 
+    #[redis_lock_job(job_name = "CacheJob_insert", interval_millis = 1000)]
+    pub async fn insert() {
+        let limit = 100000;
+        // 再加入新的过期时间
+        let mut del_where_vec = Vec::new();
+        let mut insert_where_vec = Vec::new();
+        let mut data_index = 0;
+        while let Some((db_timeout, key, storage_type)) = INSERT_VEC.lock().unwrap().pop() {
+            data_index+=1;
+
+            {
+                del_where_vec.push(format!(
+                    r#" ( `STORAGE_TYPE` = "{}" AND `EXPIRE_KEY` = "{}" ) "#,
+                    storage_type, key
+                ));
+            }
+
+            {
+                insert_where_vec.push(format!(
+                    r#" ( "{}" , "{}", "{}") "#,
+                    db_timeout, key, storage_type
+                ));
+            }
+            
+            if data_index > limit{
+                println!("insret 截断");
+                break;
+            }
+
+        }
+        if !del_where_vec.is_empty() {
+            let _ = pro_sqlite_util::execute(format!(
+                "DELETE FROM `MAP_DB_EXPIRE` WHERE {} ;",
+                del_where_vec.join(" OR ")
+            ));
+        }
+        if !insert_where_vec.is_empty() {
+            let _ = pro_sqlite_util::execute(format!(
+                "INSERT INTO `MAP_DB_EXPIRE` (`TIMEOUT`, `EXPIRE_KEY`, `STORAGE_TYPE`) VALUES {} ;",
+                insert_where_vec.join(" , ")
+            ));
+        }
+
+    }
 }
 
 pub fn disk_write<T>(key: impl Into<String>, t: &T)
@@ -75,11 +121,7 @@ where
     let value = serde_json::to_string(t).unwrap();
     let key = key.into();
     let _ = pro_sqlite_util::execute_by_params(
-        "DELETE FROM `DISK_CACHE` WHERE `KEY` = ? ;",
-        (key.clone(),),
-    );
-    let _ = pro_sqlite_util::execute_by_params(
-        "INSERT INTO `DISK_CACHE` (`KEY`, `DATA`) VALUES (?, ?);",
+        "INSERT OR REPLACE INTO `DISK_CACHE` (`KEY`, `DATA`) VALUES (?, ?);",
         (key.clone(), value),
     );
     add_expir(key, timeout, DISK);
@@ -91,7 +133,7 @@ where
 {
     let key = key.into();
     let result = pro_sqlite_util::select_one(
-        "SELECT `DATA` FROM `NAVICAT_ROWID` FROM `KEY` = ?",
+        "SELECT `DATA` FROM `DISK_CACHE` WHERE `KEY` = ?",
         (key,),
         |row| row.get::<usize, String>(0).unwrap(),
     );
@@ -165,14 +207,8 @@ where
 fn add_expir(key: impl Into<String>, timeout: i64, storage_type: &str) {
     let key = key.into();
     let db_timeout = pro_time_util::get_current_milliseconds() + timeout;
-    // 先删除
-    let _ = pro_sqlite_util::execute_by_params(
-        "DELETE FROM `MAP_DB_EXPIRE` WHERE `STORAGE_TYPE` = ? AND `EXPIRE_KEY` = ? ;",
-        (storage_type, key.clone()),
-    );
-    // 再加入新的过期时间
-    let _ = pro_sqlite_util::execute_by_params(
-        "INSERT INTO `MAP_DB_EXPIRE` (`TIMEOUT`, `EXPIRE_KEY`, `STORAGE_TYPE`) VALUES (?, ?, ?);",
-        (db_timeout, key.clone(), storage_type),
-    );
+    INSERT_VEC
+        .lock()
+        .unwrap()
+        .push((db_timeout, key.clone(), storage_type.to_string()));
 }
